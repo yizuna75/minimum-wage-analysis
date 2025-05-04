@@ -1,0 +1,198 @@
+---
+title: "Untitled"
+author: "Yizhou Sun"
+date: "2025-05-03"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 4.1
+```{r}
+setwd("C:/Users/43677/Desktop/data")
+library(dplyr)
+
+mw_data <- read.csv("estat_earn_mw_cur_filtered_en.csv") %>%
+  select(geo, TIME_PERIOD, nominal_mw = OBS_VALUE) %>%
+  filter(TIME_PERIOD == "2023-S2") 
+
+pli_data <- read.csv("estat_prc_ppp_ind_filtered_en.csv") %>%
+  select(geo, TIME_PERIOD, pli = OBS_VALUE) %>%
+  filter(TIME_PERIOD == 2023) 
+
+combined_data <- inner_join(mw_data, pli_data, by = "geo") %>%
+  select(geo, pli, nominal_mw)
+
+# Calculate the real minimum wage
+result <- combined_data %>%
+  mutate(
+    real_mw = round((nominal_mw / pli) * 100, 1)  
+  ) %>%
+  arrange(desc(real_mw))  
+
+print(result)
+```
+```{r}
+library(ggplot2)
+library(tidyr)
+
+# Convert to long format for grouped bar plot
+result_long <- result %>%
+  pivot_longer(
+    cols = c(nominal_mw, real_mw),
+    names_to = "wage_type",
+    values_to = "value"
+  ) %>%
+  mutate(
+    wage_type = factor(wage_type, 
+                      levels = c("nominal_mw", "real_mw"),
+                      labels = c("Nominal Wage", "Real Wage"))
+  )
+
+ggplot(result_long, aes(x = reorder(geo, -value), y = value, fill = wage_type)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  scale_fill_manual(values = c("#1f77b4", "#ff7f0e")) +
+  labs(
+    title = "Nominal vs Real Minimum Wage in EU Countries (2023, EU27_2020=100)",
+    x = "Country",
+    y = "Wage Level (EUR)",
+    fill = "Wage Type"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1) 
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
+  
+  geom_text(
+    aes(label = round(value, 0)),
+    position = position_dodge(width = 0.8),
+    vjust = -0.5, 
+    size = 2
+  )
+```
+```{r}
+stats_summary <- result %>%
+  summarise(
+    Median = median(real_mw),
+    Q1 = quantile(real_mw, 0.25),
+    Q3 = quantile(real_mw, 0.75),
+    Min = min(real_mw),
+    Max = max(real_mw),
+    IQR = IQR(real_mw),
+    .groups = 'drop'
+  ) %>%
+  mutate(Outlier_threshold_high = Q3 + 1.5 * IQR) 
+
+print(stats_summary)
+```
+
+# 4.2
+```{r}
+gdp_data <- read.csv("estat_tec00114_filtered_en.csv") %>%
+  filter(TIME_PERIOD == 2023) %>%  
+  select(geo, gdp_per_capita = OBS_VALUE)  
+
+combined_data <- result %>%
+  inner_join(gdp_data, by = "geo") 
+
+ggplot(combined_data, aes(x = gdp_per_capita, y = real_mw)) +
+  geom_point(aes(color = gdp_per_capita), size = 4, alpha = 0.8) +  
+  geom_smooth(method = "lm", se = FALSE, color = "#98FF98") + 
+  ggrepel::geom_text_repel(  
+    aes(label = geo),
+    size = 3,
+    box.padding = 0.5,
+    max.overlaps = 20
+  ) +
+  scale_color_gradient(low = "#1f77b4", high = "#ff7f0e") + 
+  labs(
+    title = "Relationship between GDP per capita and Real Minimum Wage (2023)",
+    x = "GDP per capita (PPS_EU27_2020=100)",
+    y = "Real Minimum Wage (EU27_2020=100)",
+    color = "GDP Level"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "bottom"
+  ) +
+  annotate("text",
+           x = max(combined_data$gdp_per_capita)*0.8,
+           y = max(combined_data$real_mw)*0.9,
+           label = paste0("r = ", round(cor(combined_data$gdp_per_capita, combined_data$real_mw), 2)),
+           color = "black",
+           size = 5)
+
+
+```
+
+# 4.3
+```{r}
+quantiles <- quantile(combined_data$gdp_per_capita, probs = c(0, 0.25, 0.75, 1))
+
+combined_data <- combined_data %>%
+  mutate(
+    gdp_group = cut(
+      gdp_per_capita,
+      breaks = quantiles,
+      labels = c("Low", "Medium", "High"),
+      include.lowest = TRUE
+    )
+  )
+
+group_summary <- combined_data %>%
+  group_by(gdp_group) %>%
+  summarise(
+    countries = paste(geo, collapse = ", "),
+    count = n(),
+    .groups = 'drop'
+  )
+
+print(group_summary)
+```
+
+```{r}
+combined_data %>%
+  group_by(gdp_group) %>%
+  summarise(
+    min_gdp = min(gdp_per_capita),
+    max_gdp = max(gdp_per_capita),
+    .groups = 'drop'
+  )
+```
+
+
+```{r}
+# Calculate wage statistics by group
+combined_data %>%
+  group_by(gdp_group) %>%
+  summarise(
+    median_wage = median(real_mw),
+    q1_wage = quantile(real_mw, 0.25),
+    q3_wage = quantile(real_mw, 0.75),
+    IQR = IQR(real_mw),
+    .groups = 'drop'
+  )
+```
+
+```{r}
+ggplot(combined_data, aes(x = gdp_group, y = real_mw, fill = gdp_group)) +
+  geom_violin(trim = FALSE, alpha = 0.7) +
+  geom_boxplot(width = 0.2, fill = "white") +
+  scale_fill_manual(values = c("#4E79A7", "#F28E2B", "#59A14F")) +
+  labs(
+    title = "Real Minimum Wage by GDP Group",
+    x = "GDP Group",
+    y = "Real Minimum Wage (EU27_2020=100)",
+    fill = "GDP Group"
+  ) +
+  theme_minimal()
+```
+
